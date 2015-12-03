@@ -1,8 +1,6 @@
 
-/**
  * author:邹凯明
  * email:0x4c4a@gmai.com
- */
 
 # poi-utils
 help you more easy read or write excel file
