@@ -1,19 +1,21 @@
-package org.zoukaiming.pio.utils.excel;
+package org.zoukaiming.pio.utils;
 
 import java.io.Serializable;
+
+import org.zoukaiming.pio.utils.read.ExcelFileReadCellProcessor;
 
 /**
  * @author zoukaiming
  */
-class InnerEntry implements Serializable {
+public class InnerEntry implements Serializable {
 
-    private static final long                    serialVersionUID = 1L;
-    private String                               fieldName;
-    private boolean                              required         = true; // /////
-    private ExcelFileReadCellProcessor           processor;
-    private ExcelFileCellValueMapping<String, ?> valueMapping;
+    private static final long                         serialVersionUID = 1L;
+    private String                                    fieldName;
+    private boolean                                   required         = true; // /////
+    private ExcelFileReadCellProcessor                processor;
+    private ExcelFileCellValueMapping<String, Object> valueMapping;
 
-    public InnerEntry(String fieldName, ExcelFileCellValueMapping<String, ?> valueMapping,
+    public InnerEntry(String fieldName, ExcelFileCellValueMapping<String, Object> valueMapping,
                       ExcelFileReadCellProcessor processor, boolean required) {
         this.fieldName = fieldName;
         this.valueMapping = valueMapping;
@@ -37,11 +39,11 @@ class InnerEntry implements Serializable {
         this.processor = processor;
     }
 
-    public ExcelFileCellValueMapping<String, ?> getValueMapping() {
+    public ExcelFileCellValueMapping<String, Object> getValueMapping() {
         return valueMapping;
     }
 
-    public void setValueMapping(ExcelFileCellValueMapping<String, ?> valueMapping) {
+    public void setValueMapping(ExcelFileCellValueMapping<String, Object> valueMapping) {
         this.valueMapping = valueMapping;
     }
 

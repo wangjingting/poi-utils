@@ -1,20 +1,21 @@
-package org.zoukaiming.pio.utils.excel;
+package org.zoukaiming.pio.utils;
 
 /**
  * @author zoukaiming
  */
 public class ExcelFileException extends RuntimeException {
 
-    private static final long serialVersionUID            = 1L;
-    public static int         CODE_OF_CELL_VALUE_REQUIRED = 1;
-    public static int         CODE_OF_PROCESS_EXCEPTION   = 2;
+    private static final long serialVersionUID                    = 1L;
+    public static int         CODE_OF_CELL_VALUE_REQUIRED         = 1;
+    public static int         CODE_OF_CELL_VALUE_NOT_MATCHED      = 2;
+    public static int         CODE_OF_PROCESS_TYPE_CAST_EXCEPTION = 3;
+    public static int         CODE_OF_PROCESS_EXCEPTION           = 999;
 
-    private Integer           rowIndex                    = null;
-    private String            rowStrIndex                 = null;
-    private String            colStrIndex                 = null;
-    private Integer           colIndex                    = null;
-    private String            userErrorCode               = null;
-    private int               systemErrorCode             = 0;
+    private Integer           rowIndex                            = null;
+    private String            colStrIndex                         = null;
+    private Integer           colIndex                            = null;
+    private String            userErrorCode                       = null;
+    private int               systemErrorCode                     = 0;
 
     public String getUserErrorCode() {
         return userErrorCode;
@@ -70,14 +71,6 @@ public class ExcelFileException extends RuntimeException {
 
     public void setColIndex(Integer colIndex) {
         this.colIndex = colIndex;
-    }
-
-    public String getRowStrIndex() {
-        return rowStrIndex;
-    }
-
-    public void setRowStrIndex(String rowStrIndex) {
-        this.rowStrIndex = rowStrIndex;
     }
 
 }

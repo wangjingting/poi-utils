@@ -1,9 +1,8 @@
-﻿package org.zoukaiming.pio.utils.excel;
+package org.zoukaiming.pio.utils;
 
 import java.beans.PropertyDescriptor;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -17,52 +16,16 @@ import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.util.Assert;
 import org.zoukaiming.pio.utils.common.Exclude;
 import org.zoukaiming.pio.utils.common.Include;
+import org.zoukaiming.pio.utils.read.ExcelFileReadContext;
+import org.zoukaiming.pio.utils.read.ExcelFileReadRowProcessor;
+import org.zoukaiming.pio.utils.read.ExcelFileReadSheetProcessor;
 
-import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.util.TypeUtils;
 
 /**
  * @author zoukaiming
  */
 public class ExcelFileUtil {
-
-    /**
-     * @param colIndex
-     * @return
-     */
-    public static int convertRowCharIndexToIntIndex(String colIndex) {
-        char[] chars = colIndex.toCharArray();
-        int index = 0;
-        int baseStep = 'z' - 'a' + 1;
-        int curStep = 1;
-        for (int i = chars.length - 1; i >= 0; i--) {
-            char ch = chars[i];
-            if (ch >= 'a' && ch <= 'z') {
-                index += (ch - 'a' + 1) * curStep;
-            } else if (ch >= 'A' && ch <= 'Z') {
-                index += (ch - 'A' + 1) * curStep;
-            } else {
-                throw new IllegalArgumentException("colIndex");
-            }
-            curStep *= baseStep;
-        }
-        index--;
-        return index;
-    }
-
-    /**
-     * @param index start from 0
-     * @return
-     */
-    public static String convertIntIndexToRowCharIndex(int index) {
-        Assert.isTrue(index >= 0);
-        StringBuilder sb = new StringBuilder();
-        do {
-            char c = (char) ((index % 26) + 'A');
-            sb.insert(0, c);
-            index = index / 26 - 1;
-        } while (index >= 0);
-        return sb.toString();
-    }
 
     public static void readInputStreamToObject(InputStream workbookInputStream,
                                                ExcelFileReadSheetProcessor<?>... sheetProcessors) {
@@ -93,25 +56,30 @@ public class ExcelFileUtil {
 
                     Integer pageSize = sheetProcessor.getPageSize();
                     int startRow = sheetProcessor.getStartRow();
+                    ExcelFileReadContext context = new ExcelFileReadContext();
+                    context.setCurSheetIndex(sheetIndex);
+                    context.setCurSheetName(sheetName);
+                    context.setLastRowIndex(Long.valueOf(sheet.getLastRowNum()));
+
                     if (sheetProcessor.getPageSize() != null) {
                         int total = sheet.getLastRowNum();
                         int count = (total + pageSize - 1) / pageSize;
                         for (int i = 0; i < count; i++) {
                             @SuppressWarnings("unchecked")
-                            List list = readInputStreamToObject(sheet, startRow + pageSize * i, pageSize,
+                            List list = readInputStreamToObject(context, sheet, startRow + pageSize * i, pageSize,
                                                                 sheetProcessor.getFieldMapping(), clazz,
                                                                 sheetProcessor.getInclude(),
                                                                 sheetProcessor.getExclude(),
                                                                 sheetProcessor.getRowProcessor());
-                            sheetProcessor.process(list);
+                            sheetProcessor.process(context, list);
                         }
                     } else {
                         @SuppressWarnings("unchecked")
-                        List list = readInputStreamToObject(sheet, startRow, pageSize,
+                        List list = readInputStreamToObject(context, sheet, startRow, pageSize,
                                                             sheetProcessor.getFieldMapping(), clazz,
                                                             sheetProcessor.getInclude(), sheetProcessor.getExclude(),
                                                             sheetProcessor.getRowProcessor());
-                        sheetProcessor.process(list);
+                        sheetProcessor.process(context, list);
                     }
                 } catch (RuntimeException e) {
                     sheetProcessor.onExcepton(e);
@@ -122,10 +90,10 @@ public class ExcelFileUtil {
         }
     }
 
-    private static <T> List<T> readInputStreamToObject(Sheet sheet, int startRow, Integer pageSize,
-                                                       ExcelFileFieldMapping fieldMapping, Class<T> targetClass,
-                                                       Include<String> include, Exclude<String> exclude,
-                                                       ExcelFileReadRowProcessor<T> processor) {
+    private static <T> List<T> readInputStreamToObject(ExcelFileReadContext<T> context, Sheet sheet, int startRow,
+                                                       Integer pageSize, ExcelFileFieldMapping fieldMapping,
+                                                       Class<T> targetClass, Include<String> include,
+                                                       Exclude<String> exclude, ExcelFileReadRowProcessor<T> processor) {
         Assert.isTrue(sheet != null, "sheet can't be null");
         Assert.isTrue(startRow >= 0, "startRow must greater than or equal to 0");
         Assert.isTrue(pageSize == null || pageSize >= 1, "pageSize == null || pageSize >= 1");
@@ -138,6 +106,12 @@ public class ExcelFileUtil {
         }
         //
         for (int i = startRow; i <= sheet.getLastRowNum(); i++) {
+            // //////proc row
+            context.setCurRowIndex((Long.valueOf(i)));
+            context.setCurRow(null);
+            context.setCurColIndex(null);
+            context.setCurColStrIndex(null);
+            context.setCurRowLastColIndex(null);
             if (pageSize != null && (i - startRow >= pageSize)) {
                 break;
             }
@@ -145,11 +119,10 @@ public class ExcelFileUtil {
             if (row == null) {
                 continue;
             }
-            Map<String, Object> cache = procRow(row, fieldMapping, targetClass, include, exclude, processor);
-            if (cache != null && !cache.isEmpty()) {// ignore empty row
-                T t = JSONObject.parseObject(JSONObject.toJSONString(cache), targetClass);
+            T t = procRow(context, row, fieldMapping, targetClass, include, exclude, processor);
+            if (t != null) {// ignore empty row
                 if (processor != null) {
-                    t = processor.process(row, t);
+                    t = processor.process(context, row, t);
                 }
                 if (t != null) {
                     list.add(t);
@@ -159,28 +132,34 @@ public class ExcelFileUtil {
         return list;
     }
 
-    private static <T> Map<String, Object> procRow(Row row, ExcelFileFieldMapping fieldMapping, Class<T> targetClass,
-                                                   Include<String> include, Exclude<String> exclude,
-                                                   ExcelFileReadRowProcessor<T> processor) {
+    private static <T> T procRow(ExcelFileReadContext<T> context, Row row, ExcelFileFieldMapping fieldMapping,
+                                 Class<T> targetClass, Include<String> include, Exclude<String> exclude,
+                                 ExcelFileReadRowProcessor<T> processor) {
         boolean isEmptyRow = true;
-        Map<String, Object> cache = new HashMap<String, Object>();
+        // Map<String, Object> cache = new HashMap<String, Object>();
         short minColIx = row.getFirstCellNum();
         short maxColIx = row.getLastCellNum();// note ,this return value is 1-based.
         short lastColIndex = (short) (maxColIx - 1);
+        try {
+            context.setCurRow(targetClass.newInstance());
+        } catch (Exception e1) {
+            throw new RuntimeException("error", e1);
+        }
 
         for (Entry<Integer, Map<String, InnerEntry>> fieldMappingEntry : fieldMapping.entrySet()) {
             int curColIndex = fieldMappingEntry.getKey();// excel index;
+            context.setCurColIndex(curColIndex);
+            context.setCurColStrIndex(convertIntIndexToColCharIndex(curColIndex));
 
             if (curColIndex > lastColIndex || curColIndex < minColIx) {
                 Map<String, InnerEntry> fields = fieldMappingEntry.getValue();
                 for (Map.Entry<String, InnerEntry> field : fields.entrySet()) {
                     String fieldName = field.getValue().getFieldName();
-                    if (field.getValue().isRequired() && include != null && include.contains(fieldName)) {
+                    if (field.getValue().isRequired() || (include != null && include.contains(fieldName))) {
                         ExcelFileException e = new ExcelFileException();
                         e.setRowIndex(row.getRowNum());
-                        e.setRowStrIndex(String.valueOf(row.getRowNum() + 1));
                         e.setColIndex(curColIndex);
-                        e.setColStrIndex(convertIntIndexToRowCharIndex(curColIndex));//
+                        e.setColStrIndex(convertIntIndexToColCharIndex(curColIndex));//
                         e.setSystemErrorCode(ExcelFileException.CODE_OF_CELL_VALUE_REQUIRED);
                         throw e;
                     } else {
@@ -191,15 +170,19 @@ public class ExcelFileUtil {
                 Cell cell = row.getCell((int) curColIndex);
                 Map<String, InnerEntry> fields = fieldMappingEntry.getValue();
                 for (Map.Entry<String, InnerEntry> fieldEntry : fields.entrySet()) {
+                    // ////proc cell
+                    context.setCurColIndex(curColIndex);
+                    context.setCurColStrIndex(convertIntIndexToColCharIndex(curColIndex));
+                    context.setCurRowLastColIndex(Integer.valueOf(row.getLastCellNum()));
+
                     String fieldName = fieldEntry.getValue().getFieldName();
                     InnerEntry entry = fieldEntry.getValue();
                     if (cell == null) {
                         if (entry.isRequired()) {
                             ExcelFileException e = new ExcelFileException();
                             e.setRowIndex(row.getRowNum());
-                            e.setRowStrIndex(String.valueOf(row.getRowNum() + 1));
                             e.setColIndex(curColIndex);
-                            e.setColStrIndex(convertIntIndexToRowCharIndex(curColIndex));//
+                            e.setColStrIndex(convertIntIndexToColCharIndex(curColIndex));//
                             e.setSystemErrorCode(ExcelFileException.CODE_OF_CELL_VALUE_REQUIRED);
                             throw e;
                         } else {
@@ -223,13 +206,13 @@ public class ExcelFileUtil {
                         case Cell.CELL_TYPE_BLANK:
                             // null;
                             Object value = null;
-                            convertedValue = procValueConvert(row, cell, entry, fieldName, value);
+                            convertedValue = procValueConvert(context, row, cell, entry, fieldName, value);
                             break;
                         case Cell.CELL_TYPE_BOOLEAN:
                             isEmptyRow = false;
                             boolean bool = cell.getBooleanCellValue();
                             String boolStr = String.valueOf(bool);
-                            convertedValue = procValueConvert(row, cell, entry, fieldName, boolStr);
+                            convertedValue = procValueConvert(context, row, cell, entry, fieldName, boolStr);
                             break;
                         case Cell.CELL_TYPE_ERROR:
                             cell.getErrorCellValue();
@@ -245,7 +228,7 @@ public class ExcelFileUtil {
                             if (formula != null) {
                                 formula = formula.trim();
                             }
-                            convertedValue = procValueConvert(row, cell, entry, fieldName, formula);
+                            convertedValue = procValueConvert(context, row, cell, entry, fieldName, formula);
                             break;
                         case Cell.CELL_TYPE_NUMERIC:
                             isEmptyRow = false;
@@ -259,7 +242,7 @@ public class ExcelFileUtil {
                             }
                             // 暂不支持日期/时间
                             // cell.getCellStyle().getDataFormatString();
-                            convertedValue = procValueConvert(row, cell, entry, fieldName, inputValue);
+                            convertedValue = procValueConvert(context, row, cell, entry, fieldName, inputValue);
                             break;
                         case Cell.CELL_TYPE_STRING:
                             isEmptyRow = false;
@@ -270,13 +253,26 @@ public class ExcelFileUtil {
                             if (str != null) {
                                 str = str.trim();
                             }
-                            convertedValue = procValueConvert(row, cell, entry, fieldName, str);
+                            convertedValue = procValueConvert(context, row, cell, entry, fieldName, str);
                             break;
                         default:
                             throw new RuntimeException("unsupport cell type " + cellType);
                     }
                     if (convertedValue != null) {// ignore null
-                        cache.put(fieldName, convertedValue);
+                        try {
+                            Class<?> paramType = pd.getWriteMethod().getParameterTypes()[0];
+                            if (convertedValue != null && !paramType.isAssignableFrom(convertedValue.getClass())) {
+                                convertedValue = TypeUtils.cast(convertedValue, paramType, null);
+                            }
+                            pd.getWriteMethod().invoke(context.getCurRow(), convertedValue);
+                        } catch (Exception e1) {
+                            ExcelFileException e = new ExcelFileException(e1);
+                            e.setRowIndex(row.getRowNum());
+                            e.setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
+                            e.setColIndex(cell.getColumnIndex());
+                            e.setSystemErrorCode(ExcelFileException.CODE_OF_PROCESS_EXCEPTION);
+                            throw e;
+                        }
                     }
                 }
             }
@@ -284,32 +280,86 @@ public class ExcelFileUtil {
         if (isEmptyRow) {
             return null;
         } else {
-            return cache;
+            return context.getCurRow();
         }
     }
 
-    private static Object procValueConvert(Row row, Cell cell, InnerEntry entry, String fieldName, Object value) {
+    private static Object procValueConvert(ExcelFileReadContext<?> context, Row row, Cell cell, InnerEntry entry,
+                                           String fieldName, Object value) {
         Object convertedValue = value;
         if (entry.getValueMapping() != null) {
-            ExcelFileCellValueMapping<String, ?> valueMapping = entry.getValueMapping();
-            convertedValue = valueMapping.get(value);
+            ExcelFileCellValueMapping<String, Object> valueMapping = entry.getValueMapping();
+            String strValue = TypeUtils.castToString(value);
+            convertedValue = valueMapping.get(strValue);
             if (convertedValue == null) {
-                if (!valueMapping.containsKey(value)) {
+                if (!valueMapping.containsKey(strValue)) {
                     if (valueMapping.containsKey(ExcelFileCellValueMapping.DEFAULT_KEY)) {
-                        convertedValue = valueMapping.get(ExcelFileCellValueMapping.DEFAULT_KEY);
+                        Object defalutValue = valueMapping.get(ExcelFileCellValueMapping.DEFAULT_KEY);
+                        if (ExcelFileCellValueMapping.DEFAULT_VALUE == defalutValue) {
+                            convertedValue = value;
+                        } else {
+                            convertedValue = defalutValue;
+                        }
                     } else if (valueMapping.getDefaultProcessor() != null) {
-                        convertedValue = valueMapping.getDefaultProcessor().process(cell, value);
+                        try {
+                            convertedValue = valueMapping.getDefaultProcessor().process(context, cell,
+                                                                                        new ExcelFileCellValue(value));
+                        } catch (RuntimeException re) {
+                            if (re instanceof ExcelFileException) {
+                                ((ExcelFileException) re).setRowIndex(row.getRowNum());
+                                ((ExcelFileException) re).setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
+                                ((ExcelFileException) re).setColIndex(cell.getColumnIndex());
+                                ((ExcelFileException) re).setSystemErrorCode(ExcelFileException.CODE_OF_PROCESS_EXCEPTION);
+                                throw re;
+                            } else {
+                                ExcelFileException e = new ExcelFileException(re);
+                                e.setRowIndex(row.getRowNum());
+                                e.setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
+                                e.setColIndex(cell.getColumnIndex());
+                                e.setSystemErrorCode(ExcelFileException.CODE_OF_PROCESS_EXCEPTION);
+                                throw e;
+                            }
+                        }
+                        if (convertedValue != null && convertedValue instanceof ExcelFileCellValue) {
+                            convertedValue = value;
+                        }
+                    } else {
+                        ExcelFileException e = new ExcelFileException();
+                        e.setRowIndex(row.getRowNum());
+                        e.setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
+                        e.setColIndex(cell.getColumnIndex());
+                        e.setSystemErrorCode(ExcelFileException.CODE_OF_CELL_VALUE_NOT_MATCHED);
+                        throw e;
                     }
                 }
             }
         } else if (entry.getProcessor() != null) {
-            convertedValue = entry.getProcessor().process(cell, value);
+            try {
+                convertedValue = entry.getProcessor().process(context, cell, new ExcelFileCellValue(value));
+            } catch (RuntimeException re) {
+                if (re instanceof ExcelFileException) {
+                    ((ExcelFileException) re).setRowIndex(row.getRowNum());
+                    ((ExcelFileException) re).setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
+                    ((ExcelFileException) re).setColIndex(cell.getColumnIndex());
+                    ((ExcelFileException) re).setSystemErrorCode(ExcelFileException.CODE_OF_PROCESS_EXCEPTION);
+                    throw re;
+                } else {
+                    ExcelFileException e = new ExcelFileException(re);
+                    e.setRowIndex(row.getRowNum());
+                    e.setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
+                    e.setColIndex(cell.getColumnIndex());
+                    e.setSystemErrorCode(ExcelFileException.CODE_OF_PROCESS_EXCEPTION);
+                    throw e;
+                }
+            }
+            if (convertedValue != null && convertedValue instanceof ExcelFileCellValue) {
+                convertedValue = value;
+            }
         }
         if (convertedValue == null && entry.isRequired()) {
             ExcelFileException e = new ExcelFileException();
             e.setRowIndex(row.getRowNum());
-            e.setRowStrIndex(String.valueOf(row.getRowNum() + 1));
-            e.setColStrIndex(convertIntIndexToRowCharIndex(cell.getColumnIndex()));
+            e.setColStrIndex(convertIntIndexToColCharIndex(cell.getColumnIndex()));
             e.setColIndex(cell.getColumnIndex());
             e.setSystemErrorCode(ExcelFileException.CODE_OF_CELL_VALUE_REQUIRED);
             throw e;
@@ -317,4 +367,44 @@ public class ExcelFileUtil {
             return convertedValue;
         }
     }
+
+    public static int convertColCharIndexToIntIndex(String colIndex) {
+        char[] chars = colIndex.toCharArray();
+        int index = 0;
+        int baseStep = 'z' - 'a' + 1;
+        int curStep = 1;
+        for (int i = chars.length - 1; i >= 0; i--) {
+            char ch = chars[i];
+            if (ch >= 'a' && ch <= 'z') {
+                index += (ch - 'a' + 1) * curStep;
+            } else if (ch >= 'A' && ch <= 'Z') {
+                index += (ch - 'A' + 1) * curStep;
+            } else {
+                throw new IllegalArgumentException("colIndex");
+            }
+            curStep *= baseStep;
+        }
+        index--;
+        return index;
+    }
+
+    /**
+     * @param index start from 0
+     * @return
+     */
+    public static String convertIntIndexToColCharIndex(int index) {
+        Assert.isTrue(index >= 0);
+        StringBuilder sb = new StringBuilder();
+        do {
+            char c = (char) ((index % 26) + 'A');
+            sb.insert(0, c);
+            index = index / 26 - 1;
+        } while (index >= 0);
+        return sb.toString();
+    }
+
+    public static void test() {
+
+    }
+
 }

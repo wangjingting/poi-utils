@@ -1,7 +1,8 @@
-package org.zoukaiming.pio.utils.excel;
+package org.zoukaiming.pio.utils.read;
 
 import java.util.List;
 
+import org.zoukaiming.pio.utils.ExcelFileFieldMapping;
 import org.zoukaiming.pio.utils.common.Exclude;
 import org.zoukaiming.pio.utils.common.Include;
 
@@ -20,7 +21,7 @@ public abstract class ExcelFileReadSheetProcessor<T> {
     private Include<String>              include;
     private Exclude<String>              exclude;
 
-    public abstract void process(List<T> list);
+    public abstract void process(ExcelFileReadContext<T> context, List<T> list);
 
     public abstract void onExcepton(RuntimeException e);
 
